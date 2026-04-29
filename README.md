@@ -33,6 +33,22 @@ streamlit run app.py
 
 You can upload your own inventory/shipment CSV data or use the provided `sample_data.csv` for a demonstration.
 
+## Expected File Format
+
+Upload a CSV where **each row represents a shipment or transaction event** — not a product catalog.
+
+| Column | Required | Description |
+|--------|----------|-------------|
+| `date` | ✅ | Date of the shipment (e.g. 2025-01-03) |
+| `item` / `product` / `sku` | ✅ | Item name or ID |
+| `quantity` / `amount` | ✅ | Units shipped |
+| `delay` / `lead_time` | ✅ | Days delayed (0 if on time) |
+| `status` | optional | e.g. delivered, delayed, pending |
+
+> ⚠️ A product catalog (one row per SKU with stock levels) will not work. Each row should be a shipment event with a date.
+
+Use `sample_data.csv` to see the expected format.
+
 ## Dataset Structure
 The app automatically detects relevant columns, but works best with a CSV containing:
 - `date` or `timestamp`
