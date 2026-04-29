@@ -521,6 +521,17 @@ def main():
             type=["csv"],
             help="Drag & drop your inventory / shipment CSV here.",
         )
+        
+        with st.expander("📋 What kind of CSV does this expect?"):
+            st.markdown("""
+            Each row should be a **shipment or transaction event**, not a product listing.
+            
+            **Required columns:** `date`, `item` (or `product`/`sku`), `quantity`, `delay` (or `lead_time`)  
+            **Optional:** `status`
+            
+            ⚠️ A product catalog won't work here. Download `sample_data.csv` from the repo to see the expected format.
+            """)
+            
         use_sample = st.checkbox("Use sample dataset", value=not bool(upload))
 
         st.divider()
