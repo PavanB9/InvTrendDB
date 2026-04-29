@@ -1,5 +1,7 @@
 # InvTrendDB
 
+https://invtrend-db.streamlit.app/
+
 An interactive inventory analytics dashboard with anomaly detection.
 
 ## Features
