@@ -175,6 +175,12 @@ def detect_status_column(df: pd.DataFrame) -> str | None:
     return None
 
 
+def describe_anomaly_mode(mode: str) -> str:
+    if mode == "per_item":
+        return "Per-item baseline"
+    return "Global baseline"
+
+
 def clean_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     """
     Full cleaning pipeline.
@@ -247,38 +253,59 @@ def clean_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 #  ANOMALY DETECTION
 # ══════════════════════════════════════════════
 
-def detect_anomalies(df: pd.DataFrame, sigma: float = 2.0) -> pd.DataFrame:
+def detect_anomalies(
+    df: pd.DataFrame,
+    sigma: float = 2.0,
+    mode: str = "global",
+    min_group_size: int = 3,
+) -> pd.DataFrame:
     """
-    Flag rows where quantity or delay_days fall outside
-    mean ± sigma * std.  Returns the flagged subset with
-    reason annotations.
+    Flag rows where quantity or delay values fall outside
+    mean ± sigma * std using either a global or per-item baseline.
+    Returns the flagged subset with reason annotations.
     """
     qty_col = detect_quantity_column(df)
     delay_col = detect_delay_column(df)
+    item_col = detect_item_column(df)
     flags: list[dict] = []
 
-    for col in [qty_col, delay_col]:
-        if col is None or col not in df.columns:
-            continue
-        mean = df[col].mean()
-        std = df[col].std()
-        if std == 0:
-            continue
+    def append_flags(scope_df: pd.DataFrame, metric_col: str, baseline: str):
+        mean = scope_df[metric_col].mean()
+        std = scope_df[metric_col].std()
+        if pd.isna(std) or std == 0:
+            return
+
         lower = mean - sigma * std
         upper = mean + sigma * std
-        mask = (df[col] < lower) | (df[col] > upper)
-        for idx in df[mask].index:
-            val = df.at[idx, col]
+        mask = (scope_df[metric_col] < lower) | (scope_df[metric_col] > upper)
+        for idx in scope_df[mask].index:
+            val = scope_df.at[idx, metric_col]
             deviation = abs(val - mean) / std
             flags.append({
                 "row": idx,
-                "column": col,
+                "column": metric_col,
                 "value": val,
                 "mean": round(mean, 2),
                 "std": round(std, 2),
                 "deviation_σ": round(deviation, 2),
                 "direction": "HIGH" if val > upper else "LOW",
+                "baseline": baseline,
+                "mode": mode,
             })
+
+    for col in [qty_col, delay_col]:
+        if col is None or col not in df.columns:
+            continue
+
+        if mode == "per_item" and item_col and item_col in df.columns:
+            grouped = df.groupby(item_col, dropna=False)
+            for item_value, group in grouped:
+                if group[col].count() < min_group_size:
+                    continue
+                baseline = str(item_value).strip() if pd.notna(item_value) else "unknown"
+                append_flags(group, col, baseline)
+        else:
+            append_flags(df, col, "All items")
 
     if not flags:
         return pd.DataFrame()
@@ -450,7 +477,12 @@ def build_status_breakdown(df: pd.DataFrame):
     return fig
 
 
-def build_anomaly_scatter(df: pd.DataFrame, anomalies: pd.DataFrame):
+def build_anomaly_scatter(
+    df: pd.DataFrame,
+    anomalies: pd.DataFrame,
+    sigma: float,
+    mode: str,
+):
     """Overlay anomalies on a quantity time-series scatter."""
     date_col = detect_date_column(df)
     qty_col = detect_quantity_column(df)
@@ -478,18 +510,31 @@ def build_anomaly_scatter(df: pd.DataFrame, anomalies: pd.DataFrame):
             name="Anomaly",
             hovertemplate="<b>ANOMALY</b><br>%{x|%b %d}: %{y:,.0f}<extra></extra>",
         ))
-    # mean ± 2σ bands
-    mean = df[qty_col].mean()
-    std = df[qty_col].std()
-    fig.add_hline(y=mean, line_dash="dash", line_color="#94a3b8",
-                  annotation_text=f"μ = {mean:.0f}", annotation_font_color="#94a3b8")
-    fig.add_hrect(y0=mean - 2 * std, y1=mean + 2 * std,
-                  fillcolor="rgba(99,102,241,.07)", line_width=0,
-                  annotation_text="±2σ", annotation_font_color="#6366f1")
+    title = "Quantity Distribution with Global Anomalies"
+    if mode == "global":
+        mean = df[qty_col].mean()
+        std = df[qty_col].std()
+        fig.add_hline(y=mean, line_dash="dash", line_color="#94a3b8",
+                      annotation_text=f"μ = {mean:.0f}", annotation_font_color="#94a3b8")
+        fig.add_hrect(y0=mean - sigma * std, y1=mean + sigma * std,
+                      fillcolor="rgba(99,102,241,.07)", line_width=0,
+                      annotation_text=f"±{sigma:g}σ", annotation_font_color="#6366f1")
+    else:
+        title = "Quantity Timeline with Per-Item Anomalies"
+        fig.add_annotation(
+            x=0,
+            y=1.08,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            align="left",
+            font=dict(size=12, color="#94a3b8"),
+            text="Anomaly thresholds are calculated independently for each item.",
+        )
 
     fig.update_layout(
         template=PLOTLY_TEMPLATE,
-        title=dict(text="Quantity Distribution with Anomalies", font=dict(size=18)),
+        title=dict(text=title, font=dict(size=18)),
         xaxis_title="Date", yaxis_title="Quantity",
         height=400,
         margin=dict(t=50, b=40, l=50, r=20),
@@ -541,6 +586,12 @@ def main():
             min_value=1.0, max_value=4.0, value=2.0, step=0.25,
             help="Rows beyond this many standard deviations from the mean are flagged.",
         )
+        anomaly_mode_requested = st.selectbox(
+            "Anomaly baseline",
+            options=["global", "per_item"],
+            format_func=describe_anomaly_mode,
+            help="Global compares every row to the full dataset. Per-item compares each row to that item's own history.",
+        )
         top_n = st.slider("Top-N items", 3, 20, 8)
 
     # ── Load data ──
@@ -562,8 +613,15 @@ def main():
     # ── Clean ──
     df, cleaning_notes = clean_dataframe(raw_df.copy())
 
+    item_col = detect_item_column(df)
+    anomaly_mode = anomaly_mode_requested
+    if anomaly_mode_requested == "per_item" and not item_col:
+        anomaly_mode = "global"
+        st.warning("Per-item anomaly mode requires an item column. Falling back to the global baseline.")
+
     # ── Detect anomalies ──
-    anomalies = detect_anomalies(df, sigma=sigma)
+    anomalies = detect_anomalies(df, sigma=sigma, mode=anomaly_mode)
+    anomaly_mode_label = describe_anomaly_mode(anomaly_mode)
 
     # ── Header ──
     st.markdown(
@@ -571,7 +629,9 @@ def main():
         '<span class="header-badge">LIVE</span>',
         unsafe_allow_html=True,
     )
-    st.caption(f"Analyzing **{source_label}** · {len(df):,} rows · σ = {sigma}")
+    st.caption(
+        f"Analyzing **{source_label}** · {len(df):,} rows · σ = {sigma} · {anomaly_mode_label}"
+    )
 
     # ── Summary metrics ──
     date_col = detect_date_column(df)
@@ -638,16 +698,16 @@ def main():
             st.success("🎉 No anomalies detected at the current threshold.")
         else:
             st.markdown(f"### 🚨 {len(anomalies)} Anomalous Data Point(s) Detected")
-            st.caption(f"Flagged using **{sigma}σ** from the mean")
+            st.caption(f"Flagged using **{sigma}σ** with a **{anomaly_mode_label.lower()}**")
 
             # Scatter overlay
-            fig = build_anomaly_scatter(df, anomalies)
+            fig = build_anomaly_scatter(df, anomalies, sigma=sigma, mode=anomaly_mode)
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
             # Anomaly table — colour-coded
             display_cols = []
-            for c in ["direction", "column", "value", "mean", "std", "deviation_σ"]:
+            for c in ["baseline", "direction", "column", "value", "mean", "std", "deviation_σ"]:
                 if c in anomalies.columns:
                     display_cols.append(c)
             # Add original data columns

@@ -8,6 +8,7 @@ An interactive inventory analytics dashboard with anomaly detection.
 - **Data Cleaning**: Automatically handles missing values, parses dates, and normalizes column names.
 - **Trend Visualizations**: View weekly throughput, delay frequency, top items, and status breakdowns via clean Plotly charts.
 - **Anomaly Flagging**: Automatically highlights rows where quantity or delay days are statistically out of range using Z-score detection (configurable sigma).
+- **Flexible Baselines**: Switch between global anomaly detection across the full dataset or per-item anomaly detection based on each item's own history.
 - **Summary Stats**: View total shipments, average delay, anomaly count, and date ranges at a glance.
 
 ## Installation
@@ -32,6 +33,17 @@ streamlit run app.py
 ```
 
 You can upload your own inventory/shipment CSV data or use the provided `sample_data.csv` for a demonstration.
+
+## Anomaly Modes
+
+The anomaly detection tab supports two baseline modes:
+
+- **Global baseline**: Compares every shipment row against the full dataset.
+- **Per-item baseline**: Compares each shipment row against the historical behavior of the same item.
+
+Per-item mode is usually more accurate for mixed datasets where different SKUs naturally have different quantity ranges or delay patterns.
+
+If the uploaded CSV does not contain a detectable item column, the app automatically falls back to the global baseline.
 
 ## Expected File Format
 
